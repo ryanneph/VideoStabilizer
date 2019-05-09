@@ -45,6 +45,12 @@ def resample_all_frames(varr, zfactor):
         revarr.append( zoom(f, zfactor) )
     return np.array(revarr)
 
+def calculate_features(varr):
+    return None
+
+def calculate_camera_motion(features):
+    return None
+
 def interactive_play_video(varr):
     ii = 0
     while ii<varr.shape[0]:
@@ -74,5 +80,8 @@ if __name__ == '__main__':
 
     varr = read_all_frames(vs)
     vz = resample_all_frames(varr, args.resample)
+
+    features = calculate_features(vz)
+    camera_motion = calculate_camera_motion(features)
 
     interactive_play_video(vz)
