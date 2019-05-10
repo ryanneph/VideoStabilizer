@@ -3,10 +3,11 @@ from os.path import join as pjoin
 import argparse
 import logging
 import time
+from pprint import pprint
 
 import numpy as np
 from scipy.ndimage import zoom
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import cv2
 
 parser = argparse.ArgumentParser()
@@ -45,23 +46,53 @@ def resample_all_frames(varr, zfactor):
         revarr.append( zoom(f, zfactor) )
     return np.array(revarr)
 
-def calculate_features(varr):
-    return None
+def grayscale_all_frames(varr):
+    revarr = []
+    for f in varr:
+        revarr.append( cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) )
+    return np.array(revarr)
+
+def calculate_features(vg):
+    # calculate tracking points
+    pts    = []
+    for f in vg:
+        f = cv2.GaussianBlur(f, (5,5), 0.2)
+        pts.append( cv2.goodFeaturesToTrack(f, maxCorners=20, qualityLevel=0.01, minDistance=30, blockSize=3) )
+    return np.squeeze(np.array(pts))
 
 def calculate_camera_motion(features):
+    # convert to grayscale
+    vg = grayscale_all_frames(varr)
+    #  curr_pts, status, err = cv2.calcOpticalFlowPyrLK(vg[ii], vg[ii+1], )
     return None
 
-def interactive_play_video(varr):
+def interactive_play_video(varr, framerate=None, features=None):
+    if not framerate:
+        framerate = 24
+    playing = True
+
     ii = 0
     while ii<varr.shape[0]:
-        cv2.imshow('', varr[ii])
+        frame = varr[ii]
+        pts = features[ii]
+        for pt in pts:
+            cv2.circle(frame, (pt[0], pt[1]), 5, (0,0,255), -1)
+        cv2.imshow('', frame)
         while True:
-            keyp = cv2.waitKey()
-            time.sleep(1/30)
-            if keyp==ord(' '):
+            keyp = cv2.waitKey(int(1/framerate*1000))
+
+            if keyp==ord(' ') or keyp==83: #right
                 break
-            if keyp==ord('q'):
+            elif keyp==81: # left
+                ii-=2
+                break
+            elif keyp==ord('p'):
+                playing = not playing
+                break
+            elif keyp==ord('q') :
                 sys.exit(0)
+            elif playing:
+                break
         if ii == varr.shape[0]-1:
             ii = 0
             continue
@@ -73,15 +104,23 @@ if __name__ == '__main__':
     nframes = int(vs.get(cv2.CAP_PROP_FRAME_COUNT))
     hh      = int(vs.get(cv2.CAP_PROP_FRAME_HEIGHT))
     ww      = int(vs.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frate   = int(vs.get(cv2.CAP_PROP_FPS))
 
     logger.debug('Read video file:\n' + \
                  '  Frames:     {}\n'.format(nframes) + \
-                 '  Size (HxW): {}x{}\n'.format(hh, ww))
+                 '  Size (HxW): {}x{}\n'.format(hh, ww) + \
+                 '  Rate (fps): {}\n'.format(frate) )
 
     varr = read_all_frames(vs)
     vz = resample_all_frames(varr, args.resample)
+    vg = grayscale_all_frames(varr)
 
-    features = calculate_features(vz)
+    features = calculate_features(vg)
     camera_motion = calculate_camera_motion(features)
 
-    interactive_play_video(vz)
+    #  plt.imshow(vg[0], cmap='gray')
+    #  print(features.shape, features[0])
+    #  plt.scatter(features[0, :, 0], features[0, :, 1], marker='+', color='red')
+    #  plt.show()
+
+    interactive_play_video(vz, features=features, framerate=frate)
