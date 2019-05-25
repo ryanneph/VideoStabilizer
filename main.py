@@ -68,6 +68,20 @@ def calculate_features(vg):
         pts.append( cv2.goodFeaturesToTrack(f, maxCorners=20, qualityLevel=0.01, minDistance=30, blockSize=3) )
     return np.squeeze(np.array(pts))
 
+def calculate_feature_flow(vg, pts):
+    """optical flow on feature points"""
+    flow = []
+    for ii in range(1,len(vg)):
+        curr_pts, status, err = cv2.calcOpticalFlowPyrLK(vg[ii-1], vg[ii], pts[ii-1])
+        # only use valid points
+        filter = np.where(status==1)[0]
+
+        fl = estimate_transform(prev_pts, curr_pts)
+
+def estimate_transform(prev_pts, curr_pts)
+    """estimate optimal motion given the tracking points from adjacent frames"""
+    mat = cv2.estimateRigidTransform(prev_pts, curr_pts)
+
 def calculate_camera_motion(features):
     # convert to grayscale
     vg = grayscale_all_frames(varr)

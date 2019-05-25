@@ -1,2 +1,3 @@
 test_videos/
 *.mp4
+!samples/*
