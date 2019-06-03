@@ -78,7 +78,7 @@ def calculate_feature_flow(vg, pts):
 
         fl = estimate_transform(prev_pts, curr_pts)
 
-def estimate_transform(prev_pts, curr_pts)
+def estimate_transform(prev_pts, curr_pts):
     """estimate optimal motion given the tracking points from adjacent frames"""
     mat = cv2.estimateRigidTransform(prev_pts, curr_pts)
 
