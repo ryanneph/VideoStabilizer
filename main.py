@@ -64,29 +64,26 @@ def calculate_features(vg):
     # calculate tracking points
     pts    = []
     for f in vg:
-        f = cv2.GaussianBlur(f, (5,5), 0.2)
-        pts.append( cv2.goodFeaturesToTrack(f, maxCorners=20, qualityLevel=0.01, minDistance=30, blockSize=3) )
+        f = cv2.GaussianBlur(f, (5,5), 0.5)
+        pts.append( cv2.goodFeaturesToTrack(f, maxCorners=40, qualityLevel=0.03, minDistance=30, blockSize=3) )
     return np.squeeze(np.array(pts))
+
+def ftou8(frame):
+    return np.uint8((frame-np.min(frame))/np.max(frame)*255)
 
 def calculate_feature_flow(vg, pts):
     """optical flow on feature points"""
     flow = []
     for ii in range(1,len(vg)):
-        curr_pts, status, err = cv2.calcOpticalFlowPyrLK(vg[ii-1], vg[ii], pts[ii-1])
+        estim_pts, status, err = cv2.calcOpticalFlowPyrLK(ftou8(vg[ii-1]), ftou8(vg[ii]), pts[ii-1], None)
         # only use valid points
         filter = np.where(status==1)[0]
-
-        fl = estimate_transform(prev_pts, curr_pts)
-
-def estimate_transform(prev_pts, curr_pts):
-    """estimate optimal motion given the tracking points from adjacent frames"""
-    mat = cv2.estimateRigidTransform(prev_pts, curr_pts)
-
-def calculate_camera_motion(features):
-    # convert to grayscale
-    vg = grayscale_all_frames(varr)
-    #  curr_pts, status, err = cv2.calcOpticalFlowPyrLK(vg[ii], vg[ii+1], )
-    return None
+        prev_pts = pts[ii-1][filter]
+        curr_pts = estim_pts[filter]
+        flow.append( cv2.findHomography(prev_pts, curr_pts) )
+        #  matcher=cv2.DescriptorMatcher_create(cv2.DescriptorMatcher_FLANNBASED)
+        #  knn_matches = matcher.knnMatch(prev_pts, curr_pts, 2)
+    return np.squeeze(np.array(flow))
 
 def interactive_play_video(varr, framerate=None, features=None):
     if not framerate:
@@ -151,9 +148,10 @@ if __name__ == '__main__':
     vg = grayscale_all_frames(varr)
 
     logger.info('Calculating tracking features...')
-    features = calculate_features(vg)
+    features = calculate_features(vg) # shape: [nframes, npoints, dims=2]
     logger.info('Calculating camera motion...')
-    camera_motion = calculate_camera_motion(features)
+    camera_motion = calculate_feature_flow(vg, features)
+    pprint(camera_motion)
 
     if args.visualize:
         #  plt.imshow(vg[0], cmap='gray')
