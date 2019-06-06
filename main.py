@@ -13,6 +13,7 @@ import cv2
 parser = argparse.ArgumentParser()
 parser.add_argument('infile', metavar='in', help='input video file')
 parser.add_argument('-o', '--out', default=None, help='input video file')
+parser.add_argument('--radius', type=int, default=3, help='moving average filter radius')
 parser.add_argument('-r', '--re', '--resample', type=float, dest='resample', default=1.0, help='resample with zoom factor')
 parser.add_argument('--vis', '--visualize', dest='visualize', action='store_true', help='play video with feature annotation')
 parser.add_argument('-L', '--loglevel', default='DEBUG', choices=list(logging._nameToLevel.keys()), help='set logging level')
@@ -80,10 +81,49 @@ def calculate_feature_flow(vg, pts):
         filter = np.where(status==1)[0]
         prev_pts = pts[ii-1][filter]
         curr_pts = estim_pts[filter]
-        flow.append( cv2.findHomography(prev_pts, curr_pts) )
+        homography, in_mask = cv2.findHomography(prev_pts, curr_pts, cv2.RANSAC)
+        flow.append(homography)
         #  matcher=cv2.DescriptorMatcher_create(cv2.DescriptorMatcher_FLANNBASED)
         #  knn_matches = matcher.knnMatch(prev_pts, curr_pts, 2)
     return np.squeeze(np.array(flow))
+
+def perspective_warp(varr, mat):
+    vout = []
+    for ii in range(len(varr)-1):
+        inim = varr[ii]
+        outim = cv2.warpPerspective(inim, mat[ii], inim.shape[:2][::-1])
+        vout.append(np.array(outim))
+    return np.squeeze(np.array(vout))
+
+def plot_motion(motion):
+    """motion is an Nx3x3 homograph matrix for N frames describing the motion between each
+    successive frame as:
+    [  ]"""
+    for ii in range(3):
+        for jj in range(3):
+             plt.plot(motion[:,ii, jj], label='M[{},{}]'.format(ii, jj))
+    plt.title('motion trajectories')
+    plt.legend()
+    plt.xlabel('frame')
+    plt.show()
+
+def smooth_motion(motion, radius=10):
+    """implements moving average"""
+    shape = motion.shape[1:]
+    flatmotion = motion.reshape((motion.shape[0], -1))
+
+    window_size = 2*radius+1
+    f = np.ones(window_size)/window_size
+    flatmpad = np.lib.pad(flatmotion, ((radius, radius), (0,0)), 'edge')
+    np.lib.pad
+
+    flatmsmooth = np.empty_like(flatmpad)
+    for pp in range(flatmotion.shape[1]):
+        flatmsmooth[:,pp] = np.convolve(flatmpad[:,pp], f, mode='same')
+
+    # unpad and reshape
+    smoothmotion = (flatmsmooth[radius:-radius]).reshape(motion.shape[0], *shape)
+    return smoothmotion
 
 def interactive_play_video(varr, framerate=None, features=None):
     if not framerate:
@@ -95,8 +135,9 @@ def interactive_play_video(varr, framerate=None, features=None):
         frame = varr[ii].copy()
         pts = features[ii]
         for pt in pts:
-            cv2.circle(frame, (pt[0], pt[1]), 5, (0,0,255), -1)
-        cv2.imshow('', frame)
+            if len(pt)==2:
+                cv2.circle(frame, (pt[0], pt[1]), 5, (0,0,255), -1)
+        cv2.imshow('features', frame)
         while True:
             keyp = cv2.waitKey(int(1/framerate*1000))
 
@@ -109,6 +150,7 @@ def interactive_play_video(varr, framerate=None, features=None):
                 playing = not playing
                 break
             elif keyp==ord('q') :
+                cv2.destroyWindow('features')
                 return
             elif playing:
                 break
@@ -116,6 +158,7 @@ def interactive_play_video(varr, framerate=None, features=None):
             ii = 0
             continue
         ii += 1
+    cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
@@ -129,7 +172,7 @@ if __name__ == '__main__':
 
     logger.debug('Video Metadata:\n' + \
                  '  Frames:     {}\n'.format(nframes) + \
-                 '  Size (HxW): {}x{}\n'.format(hh, ww) + \
+                 '  Size (WxH): {}x{}\n'.format(ww, hh) + \
                  '  Rate (fps): {}'.format(frate) )
 
     segment = None
@@ -137,7 +180,7 @@ if __name__ == '__main__':
         if args.tsegment:
             segment = ( int(args.tsegment[0]//(1/frate)), int(args.tsegment[1]//(1/frate)) )
         else:
-            segment = fsegment
+            segment = args.fsegment
         segment = (max(0, segment[0]), min(nframes, segment[1]))
         logger.debug('  Segment:    {}-{}'.format(*segment))
     logger.debug('')
@@ -151,7 +194,11 @@ if __name__ == '__main__':
     features = calculate_features(vg) # shape: [nframes, npoints, dims=2]
     logger.info('Calculating camera motion...')
     camera_motion = calculate_feature_flow(vg, features)
-    pprint(camera_motion)
+
+    trajectory = np.cumsum(camera_motion, axis=0)
+    smoothed_trajectory = smooth_motion(trajectory, radius=args.radius)
+    logger.info('Applying stabilized motion...')
+    vstab = perspective_warp(vz, camera_motion+(smoothed_trajectory-trajectory))
 
     if args.visualize:
         #  plt.imshow(vg[0], cmap='gray')
@@ -159,13 +206,16 @@ if __name__ == '__main__':
         #  plt.scatter(features[0, :, 0], features[0, :, 1], marker='+', color='red')
         #  plt.show()
         interactive_play_video(vz, features=features, framerate=frate)
+        plot_motion(trajectory)
+        interactive_play_video(vstab, features=features, framerate=frate)
+        plot_motion(smoothed_trajectory)
 
     # save video out
     logger.info('Saving stabilized footage...')
     if args.out is None:
         outfile = 'stabilized.mp4'
     vout = cv2.VideoWriter(outfile, cv2.VideoWriter_fourcc(*'mp4v'), frate, (ww, hh))
-    for f in vz:
+    for f in vstab:
         vout.write(f)
     logger.info('Stabilized footage saved to "{}"'.format(outfile))
     logger.debug('Total runtime: {:0.2f}s'.format(time.perf_counter()-time_start))
