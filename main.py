@@ -13,6 +13,7 @@ import cv2
 parser = argparse.ArgumentParser()
 parser.add_argument('infile', metavar='in', help='input video file')
 parser.add_argument('-o', '--out', default=None, help='input video file')
+parser.add_argument('--transform', default='affine', choices=['affine', 'perspective'], help='camera motion model')
 parser.add_argument('--radius', type=int, default=3, help='moving average filter radius')
 parser.add_argument('-r', '--re', '--resample', type=float, dest='resample', default=1.0, help='resample with zoom factor')
 parser.add_argument('--vis', '--visualize', dest='visualize', action='store_true', help='play video with feature annotation')
@@ -72,39 +73,61 @@ def calculate_features(vg):
 def ftou8(frame):
     return np.uint8((frame-np.min(frame))/np.max(frame)*255)
 
-def calculate_feature_flow(vg, pts):
-    """optical flow on feature points"""
+def _calc_optical_flow(frame1, points1, frame2):
+    """Calculate sparse (feature-based) optical flow between two frames"""
+    estim_pts, status, err = cv2.calcOpticalFlowPyrLK(ftou8(frame1), ftou8(frame2), points1, None)
+    # only use valid points
+    filter = np.where(status==1)[0]
+    prev_pts = points1[filter]
+    curr_pts = estim_pts[filter]
+    return prev_pts, curr_pts
+
+def _calculate_motion(vg, pts, calcfunc):
+    """optical flow on feature points and camera transform estimation using modular function 'calcfunc' """
     flow = []
     for ii in range(1,len(vg)):
-        estim_pts, status, err = cv2.calcOpticalFlowPyrLK(ftou8(vg[ii-1]), ftou8(vg[ii]), pts[ii-1], None)
-        # only use valid points
-        filter = np.where(status==1)[0]
-        prev_pts = pts[ii-1][filter]
-        curr_pts = estim_pts[filter]
-        homography, in_mask = cv2.findHomography(prev_pts, curr_pts, cv2.RANSAC)
-        flow.append(homography)
-        #  matcher=cv2.DescriptorMatcher_create(cv2.DescriptorMatcher_FLANNBASED)
-        #  knn_matches = matcher.knnMatch(prev_pts, curr_pts, 2)
+        prev_pts, curr_pts = _calc_optical_flow(vg[ii-1], pts[ii-1], vg[ii])
+        matrix, in_mask = calcfunc(prev_pts, curr_pts)
+        flow.append(matrix)
     return np.squeeze(np.array(flow))
 
-def perspective_warp(varr, mat):
+def calculate_motion_perspective(vg, pts):
+    return _calculate_motion(vg, pts, lambda a,b: cv2.findHomography(a,b,cv2.RANSAC))
+
+def calculate_motion_affine(vg, pts):
+    return _calculate_motion(vg, pts, lambda a,b: cv2.estimateAffine2D(a,b))
+
+def _warp_sequence(varr, mat, warpfunc):
     vout = []
     for ii in range(len(varr)-1):
         inim = varr[ii]
-        outim = cv2.warpPerspective(inim, mat[ii], inim.shape[:2][::-1])
+        outim = warpfunc(inim, mat[ii], inim.shape[:2][::-1])
         vout.append(np.array(outim))
     return np.squeeze(np.array(vout))
+
+def warp_sequence_perspective(varr, mat):
+    return _warp_sequence(varr, mat, lambda a,b,c: cv2.warpPerspective(a,b,c))
+
+def warp_sequence_affine(varr, mat):
+    return _warp_sequence(varr, mat, lambda a,b,c: cv2.warpAffine(a,b,c))
+
+def transform_points(points, mats):
+    newpoints = []
+    for ii in range(len(mats)):
+        newpoints.append(cv2.transform(np.array([points[ii]]), mats[ii]))
+    return np.squeeze(np.array(newpoints))
+
 
 def plot_motion(motion):
     """motion is an Nx3x3 homograph matrix for N frames describing the motion between each
     successive frame as:
     [  ]"""
-    for ii in range(3):
-        for jj in range(3):
-             plt.plot(motion[:,ii, jj], label='M[{},{}]'.format(ii, jj))
+    for ii in range(motion.shape[1]):
+        for jj in range(motion.shape[2]):
+             plt.plot(motion[:,ii, jj], label='M[{},{}]'.format(ii+1, jj+1))
     plt.title('motion trajectories')
     plt.legend()
-    plt.xlabel('frame')
+    plt.xlabel('frame #')
     plt.show()
 
 def smooth_motion(motion, radius=10):
@@ -133,10 +156,11 @@ def interactive_play_video(varr, framerate=None, features=None):
     ii = 0
     while ii<varr.shape[0]:
         frame = varr[ii].copy()
-        pts = features[ii]
-        for pt in pts:
-            if len(pt)==2:
-                cv2.circle(frame, (pt[0], pt[1]), 5, (0,0,255), -1)
+        if features is not None:
+            pts = features[ii]
+            for pt in pts:
+                if len(pt)==2:
+                    cv2.circle(frame, (pt[0], pt[1]), 5, (0,0,255), -1)
         cv2.imshow('features', frame)
         while True:
             keyp = cv2.waitKey(int(1/framerate*1000))
@@ -193,21 +217,23 @@ if __name__ == '__main__':
     logger.info('Calculating tracking features...')
     features = calculate_features(vg) # shape: [nframes, npoints, dims=2]
     logger.info('Calculating camera motion...')
-    camera_motion = calculate_feature_flow(vg, features)
+    if args.transform == 'perspective':
+        camera_motion = calculate_motion_perspective(vg, features)
+    elif args.transform == 'affine':
+        camera_motion = calculate_motion_affine(vg, features)
 
     trajectory = np.cumsum(camera_motion, axis=0)
     smoothed_trajectory = smooth_motion(trajectory, radius=args.radius)
     logger.info('Applying stabilized motion...')
-    vstab = perspective_warp(vz, camera_motion+(smoothed_trajectory-trajectory))
+    if args.transform == 'perspective':
+        vstab = warp_sequence_perspective(vz, camera_motion+(smoothed_trajectory-trajectory))
+    elif args.transform == 'affine':
+        vstab = warp_sequence_affine(vz, camera_motion+(smoothed_trajectory-trajectory))
 
     if args.visualize:
-        #  plt.imshow(vg[0], cmap='gray')
-        #  print(features.shape, features[0])
-        #  plt.scatter(features[0, :, 0], features[0, :, 1], marker='+', color='red')
-        #  plt.show()
         interactive_play_video(vz, features=features, framerate=frate)
         plot_motion(trajectory)
-        interactive_play_video(vstab, features=features, framerate=frate)
+        interactive_play_video(vstab, features=smoothed_trajectory, framerate=frate)
         plot_motion(smoothed_trajectory)
 
     # save video out

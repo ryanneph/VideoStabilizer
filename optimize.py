@@ -67,7 +67,7 @@ def proj_linf_ball(array, radius):
     return array
 
 def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts, fluence_map_shape, TV_reg=1.0, costevery=25, niters=200, eps=3e-4, resume=False):
-    print('Preparing for optimization...')
+    logger.info('Preparing for optimization...')
     time_start = time.time()
     f_checkpt = 'p2_checkpt_opt_wts.pickle'
 
@@ -108,20 +108,20 @@ def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts
     taus = np.true_divide(1, colsum_k+1e-9).reshape((-1,1))
 
     time_stop = time.time()
-    print('Setup complete. time elapsed: {!s}'.format(time.strftime('%M:%S', time.gmtime(time_stop-time_start))))
+    logger.info('Setup complete. time elapsed: {!s}'.format(time.strftime('%M:%S', time.gmtime(time_stop-time_start))))
 
     # resume from last saved checkpoint?
     if resume and os.path.exists(f_checkpt):
         try:
             with open(f_checkpt, mode='rb') as f:
                 x = pickle.load(f)
-            print('Resuming from file {!s}.'.format(f_checkpt))
+            logger.info('Resuming from file {!s}.'.format(f_checkpt))
         except:
-            print('Resume with file {!s} failed, starting from initialized variables.'.format(f_checkpt))
+            logger.info('Resume with file {!s} failed, starting from initialized variables.'.format(f_checkpt))
 
     # iterate
-    print('Beginning Optimization')
-    print('------------------------------------------')
+    logger.info('Beginning Optimization')
+    logger.info('------------------------------------------')
     time_start = time.time()
     costs = []
     stop_flag = False
@@ -129,7 +129,7 @@ def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts
         status_update = False
         if (k==1 or k%costevery==0 or k==niters): status_update = True
         if (status_update or k%5==0):
-            print('iteration {:d} (checkpoint saved)'.format(k))
+            logger.info('iteration {:d} (checkpoint saved)'.format(k))
             with open(f_checkpt, mode='wb') as f:
                 pickle.dump(x, f)
 
@@ -195,11 +195,11 @@ def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts
 
             rr1 = linalg.norm(r1)/linalg.norm(x_next)
             rr2 = linalg.norm(r2)/linalg.norm(z_next)
-            print('  |--> rel. residual 1: {:12.6e}'.format(rr1))
-            print('  |--> rel. residual 2: {:12.6e}'.format(rr2))
+            logger.info('  |--> rel. residual 1: {:12.6e}'.format(rr1))
+            logger.info('  |--> rel. residual 2: {:12.6e}'.format(rr2))
 
             if rr1<eps and rr2<eps:
-                print('STOPPING CRITERION MET')
+                logger.info('STOPPING CRITERION MET')
                 stop_flag = True
 
         # submit variable updates
@@ -217,7 +217,7 @@ def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts
                 cost += obj_wts[i+1]/2 * pow(linalg.norm(nonneg(reduced_dose_matrix_list[i].dot(x) - roi_high_list[i])),2) # Dose limits fidelity term
             cost += gamma*linalg.norm(Dx.dot(x), ord=1) + gamma*linalg.norm(Dy.dot(x), ord=1)
 
-            print('  |--> Cost: {:12.6e} '.format(cost))
+            logger.info('  |--> Cost: {:12.6e} '.format(cost))
             costs.append(cost)
 
         # break early if convergence criterion was met
@@ -225,7 +225,7 @@ def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts
             break
 
     time_stop = time.time()
-    print('------------------------------------------')
-    print('Optimization complete. time elapsed: {!s}'.format(time.strftime('%M:%S', time.gmtime(time_stop-time_start))))
+    logger.info('------------------------------------------')
+    logger.info('Optimization complete. time elapsed: {!s}'.format(time.strftime('%M:%S', time.gmtime(time_stop-time_start))))
 
     return x, costs
