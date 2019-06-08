@@ -48,11 +48,12 @@ Video media is increasingly becoming one of the most popular ways to share stori
 
 Instead, in the last decade, great focus has been placed on software stabilization of video software assisted imaging systems such as those found in nearly every smartphone, has opened the door for ameteur filmmakers and hobbyists alike to approach a polished quality of video recording. One problem associated with video recording is controlling the camera to produce the intended effect for the viewer. In many cases, this intended effect is simply to reduce un-intended motion induced by shakyness and jitter. Various camera mounting systems have been used to this effect, including the simple tri-pod to remove all translational motion, the dolly, crane, and slider, to limit the motion to smooth realizations, often constrained by the mechanical limits of the system, and even mobile Steady-Cam rigs and self-correcting gimbals, which attempt to smooth unconstrained motion for more dynamic shots. The problem with most all of these solutions lies in the cost and inconvenience of transporting, setting up, and storing this equipment.
 
-Instead, in the last decade, great focus has been placed on software stabilization of video.
+Instead, in the last decade, great focus has been placed on software stabilization of video to increase the production quality of content by removing annoying jitters and shakes.
 
 \section{Related Works}
 
 \section{Methods}
+The approach taken to achieve stabilization of a video sequence consists of the following three main steps: 1) estimation of camera motion, 2) calculation of smoothed camera motion, 3) reconstruction of stabilized video from smoothed motion trajectory. Estimation of the camera's motion trajectory can be obtained either in 2D or 3D, using one of many methods that first impose a motion model on the camera's behaviour, then fit that model for each video frame based on a dense optical flow between frames, or more commonly a sparse feature correspondence. In this work, the latter approach is taken for efficiency, by first computing a sparse set of salient image features using a corner detector developed by \cite{JianboShi1994}; other options such as SIFT (\cite{Lowe2004}), SURF (\cite{Bay2006}), and FAST (\cite{Rosten2006}) are also used frequently to similar effect.
 
 \section{Results}
 
