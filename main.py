@@ -6,20 +6,25 @@ import time
 from pprint import pprint
 
 import numpy as np
-from scipy.ndimage import zoom
-import matplotlib.pyplot as plt
 import cv2
+
+import video
+import sfm
+import stabilize
+import transform
+import visualize
 
 parser = argparse.ArgumentParser()
 parser.add_argument('infile', metavar='in', help='input video file')
 parser.add_argument('-o', '--out', default=None, help='input video file')
 parser.add_argument('--transform', default='affine', choices=['affine', 'perspective'], help='camera motion model')
 parser.add_argument('--radius', type=int, default=3, help='moving average filter radius')
-parser.add_argument('-r', '--re', '--resample', type=float, dest='resample', default=1.0, help='resample with zoom factor')
+parser.add_argument('--resample', '--re', type=float, dest='resample', default=1.0, help='resample with zoom factor')
 parser.add_argument('--vis', '--visualize', dest='visualize', action='store_true', help='play video with feature annotation')
 parser.add_argument('-L', '--loglevel', default='DEBUG', choices=list(logging._nameToLevel.keys()), help='set logging level')
 parser.add_argument('--fseg', '--frame-segment', type=int, dest='fsegment', nargs=2, default=None, help='start and end frames for processing')
 parser.add_argument('--tseg', '--time-segment', type=float, dest='tsegment', nargs=2, default=None, help='start and end times for processing')
+parser.add_argument('--nostabilize', '--nostab', action='store_false', dest='stabilize', default=True, help='skip stabilization, only resample')
 args = parser.parse_args()
 loglevel = logging._nameToLevel[args.loglevel]
 
@@ -27,166 +32,14 @@ logger = logging.getLogger(__name__)
 logger.addHandler( logging.StreamHandler(sys.stdout) )
 logging.getLogger().setLevel(loglevel)
 
-def read_all_frames(cv2_cap: cv2.VideoCapture, segment=None):
-    """read all frames of a cv2 VideoCapture into 3D numpy array"""
-    varr = []
-    ii = -1
-    while cv2_cap.isOpened():
-        ii += 1
-        if segment is not None and ii<segment[0]:
-            continue
-        elif segment is not None and ii>segment[1]:
-            break
-        status, frame = cv2_cap.read()
-        if not status:
-            break
-        varr.append(frame)
-    varr = np.array(varr)
-    return varr
-
-def resample_all_frames(varr, zfactor):
-    if not isinstance(zfactor, (tuple, list)):
-        # don't scale color channel axis
-        zfactor = (zfactor, zfactor, 1.0)
-    if zfactor[0]==1.0 and zfactor[1]==1.0:
-        return varr
-
-    revarr = []
-    for f in varr:
-        revarr.append( zoom(f, zfactor) )
-    return np.array(revarr)
-
-def grayscale_all_frames(varr):
-    revarr = []
-    for f in varr:
-        revarr.append( cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) )
-    return np.array(revarr)
-
-def calculate_features(vg):
-    # calculate tracking points
-    pts    = []
-    for f in vg:
-        f = cv2.GaussianBlur(f, (5,5), 0.5)
-        pts.append( cv2.goodFeaturesToTrack(f, maxCorners=40, qualityLevel=0.03, minDistance=30, blockSize=3) )
-    return np.squeeze(np.array(pts))
-
-def ftou8(frame):
-    return np.uint8((frame-np.min(frame))/np.max(frame)*255)
-
-def _calc_optical_flow(frame1, points1, frame2):
-    """Calculate sparse (feature-based) optical flow between two frames"""
-    estim_pts, status, err = cv2.calcOpticalFlowPyrLK(ftou8(frame1), ftou8(frame2), points1, None)
-    # only use valid points
-    filter = np.where(status==1)[0]
-    prev_pts = points1[filter]
-    curr_pts = estim_pts[filter]
-    return prev_pts, curr_pts
-
-def _calculate_motion(vg, pts, calcfunc):
-    """optical flow on feature points and camera transform estimation using modular function 'calcfunc' """
-    flow = []
-    for ii in range(1,len(vg)):
-        prev_pts, curr_pts = _calc_optical_flow(vg[ii-1], pts[ii-1], vg[ii])
-        matrix, in_mask = calcfunc(prev_pts, curr_pts)
-        flow.append(matrix)
-    return np.squeeze(np.array(flow))
-
-def calculate_motion_perspective(vg, pts):
-    return _calculate_motion(vg, pts, lambda a,b: cv2.findHomography(a,b,cv2.RANSAC))
-
-def calculate_motion_affine(vg, pts):
-    return _calculate_motion(vg, pts, lambda a,b: cv2.estimateAffine2D(a,b))
-
-def _warp_sequence(varr, mat, warpfunc):
-    vout = []
-    for ii in range(len(varr)-1):
-        inim = varr[ii]
-        outim = warpfunc(inim, mat[ii], inim.shape[:2][::-1])
-        vout.append(np.array(outim))
-    return np.squeeze(np.array(vout))
-
-def warp_sequence_perspective(varr, mat):
-    return _warp_sequence(varr, mat, lambda a,b,c: cv2.warpPerspective(a,b,c))
-
-def warp_sequence_affine(varr, mat):
-    return _warp_sequence(varr, mat, lambda a,b,c: cv2.warpAffine(a,b,c))
-
-def transform_points(points, mats):
-    newpoints = []
-    for ii in range(len(mats)):
-        newpoints.append(cv2.transform(np.array([points[ii]]), mats[ii]))
-    return np.squeeze(np.array(newpoints))
-
-
-def plot_motion(motion):
-    """motion is an Nx3x3 homograph matrix for N frames describing the motion between each
-    successive frame as:
-    [  ]"""
-    for ii in range(motion.shape[1]):
-        for jj in range(motion.shape[2]):
-             plt.plot(motion[:,ii, jj], label='M[{},{}]'.format(ii+1, jj+1))
-    plt.title('motion trajectories')
-    plt.legend()
-    plt.xlabel('frame #')
-    plt.show()
-
-def smooth_motion(motion, radius=10):
-    """implements moving average"""
-    shape = motion.shape[1:]
-    flatmotion = motion.reshape((motion.shape[0], -1))
-
-    window_size = 2*radius+1
-    f = np.ones(window_size)/window_size
-    flatmpad = np.lib.pad(flatmotion, ((radius, radius), (0,0)), 'edge')
-    np.lib.pad
-
-    flatmsmooth = np.empty_like(flatmpad)
-    for pp in range(flatmotion.shape[1]):
-        flatmsmooth[:,pp] = np.convolve(flatmpad[:,pp], f, mode='same')
-
-    # unpad and reshape
-    smoothmotion = (flatmsmooth[radius:-radius]).reshape(motion.shape[0], *shape)
-    return smoothmotion
-
-def interactive_play_video(varr, framerate=None, features=None):
-    if not framerate:
-        framerate = 24
-    playing = True
-
-    ii = 0
-    while ii<varr.shape[0]:
-        frame = varr[ii].copy()
-        if features is not None:
-            pts = features[ii]
-            for pt in pts:
-                if len(pt)==2:
-                    cv2.circle(frame, (pt[0], pt[1]), 5, (0,0,255), -1)
-        cv2.imshow('features', frame)
-        while True:
-            keyp = cv2.waitKey(int(1/framerate*1000))
-
-            if keyp==ord(' ') or keyp==83: #right
-                break
-            elif keyp==81: # left
-                ii-=2
-                break
-            elif keyp==ord('p'):
-                playing = not playing
-                break
-            elif keyp==ord('q') :
-                cv2.destroyWindow('features')
-                return
-            elif playing:
-                break
-        if ii == varr.shape[0]-1:
-            ii = 0
-            continue
-        ii += 1
-    cv2.destroyAllWindows()
-
 
 if __name__ == '__main__':
     time_start = time.perf_counter()
+    if args.out is None:
+        if args.stabilize:
+            outfile = 'stabilized.mp4'
+        else:
+            outfile = 'resampled.mp4'
 
     vs = cv2.VideoCapture(args.infile)
     nframes = int(vs.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -209,39 +62,54 @@ if __name__ == '__main__':
         logger.debug('  Segment:    {}-{}'.format(*segment))
     logger.debug('')
 
-    logger.info('Reading video frames...')
-    varr = read_all_frames(vs, segment=segment)
-    vz = resample_all_frames(varr, args.resample)
-    vg = grayscale_all_frames(varr)
+    logger.info('Reading video sequence...')
+    varr = video.read_all_frames(vs, segment=segment)
 
-    logger.info('Calculating tracking features...')
-    features = calculate_features(vg) # shape: [nframes, npoints, dims=2]
-    logger.info('Calculating camera motion...')
-    if args.transform == 'perspective':
-        camera_motion = calculate_motion_perspective(vg, features)
-    elif args.transform == 'affine':
-        camera_motion = calculate_motion_affine(vg, features)
+    logger.info('Resampling video sequence...')
+    vz, ww, hh = video.resample_all_frames(varr, args.resample)
 
-    trajectory = np.cumsum(camera_motion, axis=0)
-    smoothed_trajectory = smooth_motion(trajectory, radius=args.radius)
-    logger.info('Applying stabilized motion...')
-    if args.transform == 'perspective':
-        vstab = warp_sequence_perspective(vz, camera_motion+(smoothed_trajectory-trajectory))
-    elif args.transform == 'affine':
-        vstab = warp_sequence_affine(vz, camera_motion+(smoothed_trajectory-trajectory))
+    if not args.stabilize:
+        vstab = vz
+    else:
+        vg = video.grayscale_all_frames(varr)
 
-    if args.visualize:
-        interactive_play_video(vz, features=features, framerate=frate)
-        plot_motion(trajectory)
-        interactive_play_video(vstab, features=smoothed_trajectory, framerate=frate)
-        plot_motion(smoothed_trajectory)
+        logger.info('Selecting tracking points...')
+        points = sfm.calculate_features(vg) # shape: [nframes, npoints, dims=2]
+
+        logger.info('Calculating camera motion...')
+        if args.transform == 'perspective':
+            camera_motion = sfm.calculate_motion_perspective(vg, points)
+        elif args.transform == 'affine':
+            camera_motion = sfm.calculate_motion_affine(vg, points)
+
+        logger.info('Calculating stabilized motion...')
+        trajectory = np.cumsum(camera_motion, axis=0)
+        smoothed_trajectory = stabilize.smooth_motion(trajectory, radius=args.radius)
+
+        logger.info('Applying stabilized motion...')
+        if args.transform == 'perspective':
+            vstab = transform.warp_sequence_perspective(vz, camera_motion+(smoothed_trajectory-trajectory))
+        elif args.transform == 'affine':
+            vstab = transform.warp_sequence_affine(vz, camera_motion+(smoothed_trajectory-trajectory))
+
+
+        if args.visualize:
+            visualize.interactive_play_video(vz, features=points, framerate=frate)
+            if args.transform == 'perspective':
+                visualize.plot_motion(trajectory)
+            elif args.transform == 'affine':
+                visualize.plot_motion_affine(trajectory)
+            visualize.interactive_play_video(vstab, features=points, framerate=frate)
+            if args.transform == 'perspective':
+                visualize.plot_motion(smoothed_trajectory)
+            elif args.transform == 'affine':
+                visualize.plot_motion_affine(smoothed_trajectory)
+
 
     # save video out
-    logger.info('Saving stabilized footage...')
-    if args.out is None:
-        outfile = 'stabilized.mp4'
+    logger.info('Saving footage...')
     vout = cv2.VideoWriter(outfile, cv2.VideoWriter_fourcc(*'mp4v'), frate, (ww, hh))
     for f in vstab:
         vout.write(f)
-    logger.info('Stabilized footage saved to "{}"'.format(outfile))
+    logger.info('Processed footage saved to "{}"'.format(outfile))
     logger.debug('Total runtime: {:0.2f}s'.format(time.perf_counter()-time_start))

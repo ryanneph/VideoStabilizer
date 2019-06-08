@@ -9,6 +9,7 @@ import numpy.linalg as linalg
 
 logger = logging.getLogger(__name__)
 
+
 def makeDiscreteDiffMatrix(out_shape, shape, dir='+x', makesparse=False):
     r, c = shape
     n = out_shape[0]
