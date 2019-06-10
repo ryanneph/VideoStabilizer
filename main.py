@@ -32,6 +32,44 @@ logger = logging.getLogger(__name__)
 logger.addHandler( logging.StreamHandler(sys.stdout) )
 logging.getLogger().setLevel(loglevel)
 
+def stabilize_perspective(vz, vg, points):
+    Mseq= sfm.calculate_motion_perspective(vg, points)
+    trajectory = np.cumsum(Mseq, axis=0)
+    sm_trajectory = stabilize.smooth_motion(trajectory, radius=args.radius)
+    vstab = transform.warp_sequence_perspective(vz, Mseq+(sm_trajectory-trajectory))
+
+    if args.visualize:
+        visualize.plot_motion(trajectory, sm_trajectory)
+        visualize.interactive_play_video(vz, features=points, framerate=frate)
+        visualize.interactive_play_video(vstab, framerate=frate)
+
+    return vstab, sm_trajectory
+
+def stabilize_affine(vz, vg, points):
+    Aseq = sfm.calculate_motion_affine(vg, points)
+
+    S, R, T = sfm.decompose_affine(Aseq, vectors=True)
+    sx_traj = np.cumprod(S[:,0])
+    sy_traj = np.cumprod(S[:,1])
+    r_traj  = np.cumsum(R)
+    tx_traj = np.cumsum(T[:,0])
+    ty_traj = np.cumsum(T[:,1])
+    sx_smtraj = stabilize.smooth_motion(sx_traj, radius=args.radius)
+    sy_smtraj = stabilize.smooth_motion(sy_traj, radius=args.radius)
+    r_smtraj  = stabilize.smooth_motion(r_traj,  radius=args.radius)
+    tx_smtraj = stabilize.smooth_motion(tx_traj, radius=args.radius)
+    ty_smtraj = stabilize.smooth_motion(ty_traj, radius=args.radius)
+
+    trajectory = sfm.compose_affine(sx_traj, sy_traj, r_traj, tx_traj, ty_traj)
+    sm_trajectory = sfm.compose_affine(sx_smtraj, sy_smtraj, r_smtraj, tx_smtraj, ty_smtraj)
+    print(Aseq.shape)
+    vstab = transform.warp_sequence_affine(vz, Aseq+(sm_trajectory-trajectory))
+
+    if args.visualize:
+        visualize.plot_motion_affine(trajectory, sm_trajectory)
+        visualize.interactive_play_video(vz, features=points, framerate=frate)
+        visualize.interactive_play_video(vstab, framerate=frate)
+    return vstab, sm_trajectory
 
 if __name__ == '__main__':
     time_start = time.perf_counter()
@@ -76,35 +114,11 @@ if __name__ == '__main__':
         logger.info('Selecting tracking points...')
         points = sfm.calculate_features(vg) # shape: [nframes, npoints, dims=2]
 
-        logger.info('Calculating camera motion...')
+        logger.info('Stabilizing video sequence...')
         if args.transform == 'perspective':
-            camera_motion = sfm.calculate_motion_perspective(vg, points)
+            vstab, sm_trajectory = stabilize_perspective(vz, vg, points)
         elif args.transform == 'affine':
-            camera_motion = sfm.calculate_motion_affine(vg, points)
-
-        logger.info('Calculating stabilized motion...')
-        trajectory = np.cumsum(camera_motion, axis=0)
-        smoothed_trajectory = stabilize.smooth_motion(trajectory, radius=args.radius)
-
-        logger.info('Applying stabilized motion...')
-        if args.transform == 'perspective':
-            vstab = transform.warp_sequence_perspective(vz, camera_motion+(smoothed_trajectory-trajectory))
-        elif args.transform == 'affine':
-            vstab = transform.warp_sequence_affine(vz, camera_motion+(smoothed_trajectory-trajectory))
-
-
-        if args.visualize:
-            visualize.interactive_play_video(vz, features=points, framerate=frate)
-            if args.transform == 'perspective':
-                visualize.plot_motion(trajectory)
-            elif args.transform == 'affine':
-                visualize.plot_motion_affine(trajectory)
-            visualize.interactive_play_video(vstab, features=points, framerate=frate)
-            if args.transform == 'perspective':
-                visualize.plot_motion(smoothed_trajectory)
-            elif args.transform == 'affine':
-                visualize.plot_motion_affine(smoothed_trajectory)
-
+            vstab, sm_trajectory = stabilize_affine(vz, vg, points)
 
     # save video out
     logger.info('Saving footage...')

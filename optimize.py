@@ -1,14 +1,17 @@
-import os
+import sys, os
 import time
 import math
+from math import sqrt
 import logging
 
 import numpy as np
 from scipy import sparse
 import numpy.linalg as linalg
+import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
 
+sqeuclidean = lambda x: np.inner(x,x)
 
 def makeDiscreteDiffMatrix(out_shape, shape, dir='+x', makesparse=False):
     r, c = shape
@@ -66,6 +69,142 @@ def proj_linf_ball(array, radius):
     for x in np.nditer(array, op_flags=['readwrite'], order='K'):
         x[...] = max(-radius, min(radius, x))
     return array
+
+def soft_threshold(x, t):
+    """soft thresholding operator (Prox operator for L1 norm)"""
+    return np.sign(x)*np.maximum(np.abs(x)-t, 0)
+
+
+def prox_0(x, t):
+    return x
+
+def D2(x):
+    """compute transpose of second order discrete (forward) difference of x"""
+    # TODO: make more efficient by vector offset subtraction
+    N = len(x)
+    D = np.eye(N) + -2*np.eye(N, k=1) + np.eye(N, k=2)
+    D[-2:] = np.zeros((1, N))
+    return D.dot(x)
+
+def D2T(x):
+    """compute transpose of second order discrete (forward) difference of x"""
+    # TODO: make more efficient by vector offset subtraction
+    N = len(x)
+    DT = np.eye(N) + -2*np.eye(N, k=-1) + np.eye(N, k=-2)
+    DT[:, -2:] = np.zeros((N,1))
+    return DT.dot(x)
+
+def huber(x, mu):
+    xc = np.copy(x)
+    absxc = np.abs(xc)
+    mask = (np.abs(xc)>mu)
+    xc[mask] = absxc[mask] - 0.5*mu
+    xc[~mask] = np.power(xc[~mask], 2)/(2*mu)
+    return xc
+def grad_huber(x, h):
+    """compute clip function (gradient of huber loss), (projection onto sym. range set)"""
+    xc = np.copy(x)
+    mask = (np.abs(xc)>h)
+    xc[mask] = h*np.sign(xc[mask])
+    return xc
+
+def forw_L2_huber(x, xhat, lamb, mu):
+    """Compute forward operation of 1/2*||x-xhat||^2 + lambda*||Dx||_1
+    Args:
+        x:      opt. var
+        xhat:   target (constant)
+        lamb:   weighting for Huber regularization term
+        mu:     huber smoothing coeff.
+    """
+    return 0.5*sqeuclidean(x-xhat) + lamb*huber(D2(x), mu)
+def grad_L2_huber(x, xhat, lamb, mu):
+    """Compute gradient of 1/2*||x-xhat||^2 + lambda*||Dx||_1
+    Args:
+        x:      opt. var
+        xhat:   target (constant)
+        lamb:   weighting for Huber regularization term
+        mu:     huber smoothing coeff.
+    """
+    grad = (x-xhat) + (lamb/mu)*D2T(grad_huber(D2(x), mu))
+    return grad
+
+def positive_root(t, tprev, thetaprev):
+    """compute positive root of: tprev*theta^2 = t*thetaprev^2 * (1-theta)"""
+    print(t, tprev, thetaprev)
+    lhs = -t*thetaprev**2
+    rhs = sqrt((t**2) * (thetaprev**4) - 4*tprev*t*(thetaprev**2))
+    roots = (lhs + np.array((1, -1))*rhs)/(2*tprev)
+    print(roots)
+    return roots[roots>0]
+
+def positive_root_2(t, tprev, thetaprev):
+    r = tprev/t
+    return thetaprev*(sqrt(4*r+thetaprev**2) - thetaprev)/(2*r)
+
+def optimize(xhat, forwg, gradg, proxh, wreg=1.0, eps=1e-15, niters=100):
+    logger.info('Preparing for optimization...')
+    time_start = time.time()
+
+    # initialize opt vars
+    nu = x = np.random.rand(*xhat.shape)
+    #  x = xhat
+    #  nu = xhat
+    beta1 = 2 # >1
+    beta2 = 4 # >1
+    theta = 1 #==1
+    tprev = 0 #==0
+    t = 1
+
+    res_history = []
+    f_history = []
+    for kk in range(1,niters+1):
+        # FISTA UPDATE STEP
+        xprev = x
+        nuprev = nu
+        tprev = t if kk>1 else 0
+        thetaprev = theta if kk>1 else 1
+
+        # line search
+        t *= beta1
+        ll = 0
+        while True:
+            theta = positive_root_2(t, tprev, thetaprev) if kk>1 else 1
+            y = (1-theta)*xprev + theta*nuprev
+            x = proxh(y-t*gradg(y) , t)
+
+            # check inequality
+            ubound_gap = ((forwg(y) + np.inner(gradg(y), x-y) + 0.5*t*sqeuclidean(x-y))) - forwg(x)
+            logger.debug('k_{}|ls_{}>> t:{}, gap:{}, '.format(kk, ll, t, ubound_gap))
+            if ubound_gap >= 0:
+                break
+            ll+=1
+            t /= beta2
+
+        nu = xprev + (1/theta)*(x-xprev)
+        residual = np.linalg.norm(xprev-x)/np.linalg.norm(xprev)
+        logger.debug('k_{}>> res:{}'.format(kk, residual))
+        res_history.append(residual)
+        f_history.append(forwg(x))
+        if (residual <= eps):
+            break
+
+    plt.plot(res_history)
+    plt.figure()
+    plt.plot(f_history)
+    plt.show()
+
+    return x
+
+
+if __name__ == '__main__':
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler(sys.stdout))
+    xhat = np.zeros((10000,))
+    x = optimize(xhat, lambda x: 0.5*sqeuclidean(x-xhat), lambda x: x-xhat, prox_0,)
+    logger.debug(x)
+
+
+
 
 def optimizeFluence_CP(reduced_dose_matrix_list, ptv_low, roi_high_list, obj_wts, fluence_map_shape, TV_reg=1.0, costevery=25, niters=200, eps=3e-4, resume=False):
     logger.info('Preparing for optimization...')

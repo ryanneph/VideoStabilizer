@@ -1,4 +1,5 @@
 import logging
+import math
 
 import numpy as np
 import cv2
@@ -11,8 +12,8 @@ def calculate_features(vg):
     # calculate tracking points
     pts = []
     for f in vg:
-        f = cv2.GaussianBlur(f, (3,3), 0.3)
-        pts.append( cv2.goodFeaturesToTrack(f, maxCorners=50, qualityLevel=0.03, minDistance=30, blockSize=3) )
+        f = cv2.GaussianBlur(f, (5,5), 0.5)
+        pts.append( cv2.goodFeaturesToTrack(f, maxCorners=30, qualityLevel=0.05, minDistance=30, blockSize=3) )
     return np.squeeze(np.array(pts))
 
 def _calc_optical_flow(frame1, points1, frame2):
@@ -58,11 +59,23 @@ def decompose_affine(As, vectors=False):
 
         if vectors:
             Sout.append(np.diagonal(S)[:-1])
-            Rout.append(np.arccos(0.5*(R[0,0]+R[1,1])))
+            Rout.append(np.arctan2(R[1,0], R[0,0]))
             Tout.append(T[:-1, -1])
         else:
             Sout.append(S)
             Rout.append(R)
             Tout.append(T)
     return (np.array(Sout), np.array(Rout), np.array(Tout))
+
+def compose_affine(sx, sy, r, tx, ty):
+    N = len(sx)
+    cosr, sinr = np.cos(r), np.sin(r)
+    A = np.zeros((N, 2, 3))
+    A[:,  0, -1] = tx
+    A[:,  1, -1] = ty
+    A[:,  0,  0] = sx*cosr
+    A[:,  0,  1] = -sx*sinr
+    A[:,  1,  0] = sy*sinr
+    A[:,  1,  1] = sy*cosr
+    return A
 
