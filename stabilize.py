@@ -2,6 +2,8 @@ import logging
 
 import numpy as np
 
+import optimize
+
 logger = logging.getLogger(__name__)
 
 def smooth_motion(motion, radius=10):
@@ -21,4 +23,8 @@ def smooth_motion(motion, radius=10):
     # unpad and reshape
     smoothmotion = (flatmsmooth[radius:-radius]).reshape(motion.shape[0], *shape)
     return smoothmotion
+
+def optimize_motion(motion, smoothness=1, eps=1e-6, niters=300, lamb=0.5, mu=1):
+    sm_motion = optimize.optimize(motion, lambda x: optimize.forw_L2_huber(x, motion, lamb, mu), lambda x: optimize.grad_huber(x, mu), optimize.prox_0, wreg=smoothness, eps=eps, niters=niters)
+    return sm_motion
 

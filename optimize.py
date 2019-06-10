@@ -13,47 +13,6 @@ logger = logging.getLogger(__name__)
 
 sqeuclidean = lambda x: np.inner(x,x)
 
-def makeDiscreteDiffMatrix(out_shape, shape, dir='+x', makesparse=False):
-    r, c = shape
-    n = out_shape[0]
-
-    # define how to assign values and how data is stored
-    if not makesparse:
-        D = np.zeros((n,n))
-        def assign(r, c, val):
-            D[r, c] = val
-    else:
-        # build coordinate and data lists
-        data = []
-        r_ind = []
-        c_ind = []
-        def assign(r, c, val):
-            r_ind.append(r)
-            c_ind.append(c)
-            data.append(val)
-
-    # construct matrix
-    if dir == '+x':
-        for y in range(n):
-            if y<n-1 and (y==0 or not (y+1)%c==0):
-                assign(y,y,1)
-                assign(y,y+1,-1)
-            else:
-                assign(y,y,1)
-                assign(y,y-1,-1)
-    elif dir == '+y':
-        for y in range(n):
-            if y<n-c and (y<(c*(r-1))):
-                assign(y,y,1)
-                assign(y,y+c,-1)
-            else:
-                assign(y,y,1)
-                assign(y,y-c,-1)
-
-    if makesparse:
-        D = sparse.coo_matrix((data, (r_ind, c_ind)), shape=(n,n))
-    return D
-
 def nonneg(array):
     """projection of array onto non-negative orthant
     operation amounts to an elementwise max(0,val)
@@ -100,12 +59,12 @@ def huber(x, mu):
     mask = (np.abs(xc)>mu)
     xc[mask] = absxc[mask] - 0.5*mu
     xc[~mask] = np.power(xc[~mask], 2)/(2*mu)
-    return xc
-def grad_huber(x, h):
+    return np.sum(np.abs(xc))
+def grad_huber(x, mu):
     """compute clip function (gradient of huber loss), (projection onto sym. range set)"""
     xc = np.copy(x)
-    mask = (np.abs(xc)>h)
-    xc[mask] = h*np.sign(xc[mask])
+    mask = (np.abs(xc)>mu)
+    xc[mask] = mu*np.sign(xc[mask])
     return xc
 
 def forw_L2_huber(x, xhat, lamb, mu):
@@ -130,11 +89,9 @@ def grad_L2_huber(x, xhat, lamb, mu):
 
 def positive_root(t, tprev, thetaprev):
     """compute positive root of: tprev*theta^2 = t*thetaprev^2 * (1-theta)"""
-    print(t, tprev, thetaprev)
     lhs = -t*thetaprev**2
     rhs = sqrt((t**2) * (thetaprev**4) - 4*tprev*t*(thetaprev**2))
     roots = (lhs + np.array((1, -1))*rhs)/(2*tprev)
-    print(roots)
     return roots[roots>0]
 
 def positive_root_2(t, tprev, thetaprev):
@@ -146,9 +103,9 @@ def optimize(xhat, forwg, gradg, proxh, wreg=1.0, eps=1e-15, niters=100):
     time_start = time.time()
 
     # initialize opt vars
-    nu = x = np.random.rand(*xhat.shape)
-    #  x = xhat
-    #  nu = xhat
+    #  nu = x = np.random.rand(*xhat.shape)
+    x = xhat
+    nu = xhat
     beta1 = 2 # >1
     beta2 = 4 # >1
     theta = 1 #==1
@@ -188,11 +145,12 @@ def optimize(xhat, forwg, gradg, proxh, wreg=1.0, eps=1e-15, niters=100):
         if (residual <= eps):
             break
 
-    plt.plot(res_history)
-    plt.figure()
-    plt.plot(f_history)
-    plt.show()
+    #  plt.plot(res_history)
+    #  plt.figure()
+    #  plt.plot(f_history)
+    #  plt.show()
 
+    logger.debug(x)
     return x
 
 

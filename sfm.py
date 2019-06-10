@@ -69,7 +69,8 @@ def decompose_affine(As, vectors=False):
 
 def compose_affine(sx, sy, r, tx, ty):
     N = len(sx)
-    cosr, sinr = np.cos(r), np.sin(r)
+    cosr = np.cos(r)
+    sinr = np.sin(r)
     A = np.zeros((N, 2, 3))
     A[:,  0, -1] = tx
     A[:,  1, -1] = ty

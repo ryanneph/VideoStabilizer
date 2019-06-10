@@ -26,20 +26,30 @@ def plot_motion_affine(motion, sm_motion=None ):
     successive frame as:
     [  ]"""
     (S, R, T) = decompose_affine(motion, vectors=True)
+    plt.subplot(2,1,1)
+    plt.title('motion trajectories')
     plt.plot(S[:,0], label='Sx')
     plt.plot(S[:,1], label='Sy')
     plt.plot(R,      label='R')
+
+    plt.subplot(2,1,2)
+    plt.gca().set_prop_cycle(None)
     plt.plot(T[:,0], label='Tx')
     plt.plot(T[:,1], label='Ty')
     if sm_motion is not None:
         (S, R, T) = decompose_affine(sm_motion, vectors=True)
+        plt.subplot(2,1,1)
         plt.gca().set_prop_cycle(None)
         plt.plot(S[:,0], linestyle='--', label='Sx (stab)')
         plt.plot(S[:,1], linestyle='--', label='Sy (stab)')
         plt.plot(R,      linestyle='--', label='R  (stab)')
+        plt.legend()
+
+        plt.subplot(2,1,2)
+        plt.gca().set_prop_cycle(None)
         plt.plot(T[:,0], linestyle='--', label='Tx (stab)')
         plt.plot(T[:,1], linestyle='--', label='Ty (stab)')
-    plt.title('motion trajectories')
+        plt.legend()
     plt.legend()
     plt.xlabel('frame #')
     plt.show()
