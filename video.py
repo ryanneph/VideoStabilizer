@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 from scipy.ndimage import zoom
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('vidstab.'+__name__)
 
 def read_all_frames(cv2_cap: cv2.VideoCapture, segment=None):
     """read all frames of a cv2 VideoCapture into 3D numpy array"""

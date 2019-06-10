@@ -3,13 +3,14 @@ import time
 import math
 from math import sqrt
 import logging
+import warnings
 
 import numpy as np
 from scipy import sparse
 import numpy.linalg as linalg
 import matplotlib.pyplot as plt
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('vidstab.'+__name__)
 
 sqeuclidean = lambda x: np.inner(x,x)
 
@@ -37,20 +38,26 @@ def soft_threshold(x, t):
 def prox_0(x, t):
     return x
 
+D = None
 def D2(x):
     """compute transpose of second order discrete (forward) difference of x"""
     # TODO: make more efficient by vector offset subtraction
-    N = len(x)
-    D = np.eye(N) + -2*np.eye(N, k=1) + np.eye(N, k=2)
-    D[-2:] = np.zeros((1, N))
+    global D
+    if D is None:
+        N = len(x)
+        D = np.eye(N) + -2*np.eye(N, k=1) + np.eye(N, k=2)
+        D[-2:] = np.zeros((1, N))
     return D.dot(x)
 
+DT = None
 def D2T(x):
     """compute transpose of second order discrete (forward) difference of x"""
     # TODO: make more efficient by vector offset subtraction
-    N = len(x)
-    DT = np.eye(N) + -2*np.eye(N, k=-1) + np.eye(N, k=-2)
-    DT[:, -2:] = np.zeros((N,1))
+    global DT
+    if DT is None:
+        N = len(x)
+        DT = np.eye(N) + -2*np.eye(N, k=-1) + np.eye(N, k=-2)
+        DT[:, -2:] = np.zeros((N,1))
     return DT.dot(x)
 
 def huber(x, mu):
@@ -98,48 +105,102 @@ def positive_root_2(t, tprev, thetaprev):
     r = tprev/t
     return thetaprev*(sqrt(4*r+thetaprev**2) - thetaprev)/(2*r)
 
-def optimize(xhat, forwg, gradg, proxh, wreg=1.0, eps=1e-15, niters=100):
+def positive_root_3(t, tprev, thetaprev):
+    return 0.5*(1 + sqrt(1 + 4*tprev**2))
+
+
+def optimize(*args, **kwargs):
+    return FISTA_method1(*args, **kwargs)
+
+def FISTA_method1(xhat, forwg, gradg, proxh, eps=1e-15, niters=100):
     logger.info('Preparing for optimization...')
     time_start = time.time()
 
+    # hyperparams
+    beta1 = 3   # >=1
+    beta2 = 0.4 # <1
+
     # initialize opt vars
-    #  nu = x = np.random.rand(*xhat.shape)
-    x = xhat
-    nu = xhat
-    beta1 = 2 # >1
-    beta2 = 4 # >1
-    theta = 1 #==1
-    tprev = 0 #==0
-    t = 1
+    nu = xprev = xhat
+    tprev = 1
 
     res_history = []
     f_history = []
     for kk in range(1,niters+1):
-        # FISTA UPDATE STEP
-        xprev = x
-        nuprev = nu
-        tprev = t if kk>1 else 0
-        thetaprev = theta if kk>1 else 1
-
-        # line search
-        t *= beta1
         ll = 0
+        t = tprev*beta1
+        theta = 2/(kk+1)
+        y = (1-theta)*xprev + theta*nu
         while True:
-            theta = positive_root_2(t, tprev, thetaprev) if kk>1 else 1
-            y = (1-theta)*xprev + theta*nuprev
             x = proxh(y-t*gradg(y) , t)
 
-            # check inequality
-            ubound_gap = ((forwg(y) + np.inner(gradg(y), x-y) + 0.5*t*sqeuclidean(x-y))) - forwg(x)
+            # Lipschitz/step-size Condition
+            ubound_gap = (forwg(y) + np.inner(gradg(y), x-y) + (1/(2*t))*sqeuclidean(x-y)) - forwg(x)
             logger.debug('k_{}|ls_{}>> t:{}, gap:{}, '.format(kk, ll, t, ubound_gap))
             if ubound_gap >= 0:
                 break
             ll+=1
-            t /= beta2
+            t *= beta2
+
+        residual = np.linalg.norm(xprev-x)/np.linalg.norm(xprev)
+        res_history.append(residual)
+        logger.info('k_{}>> res:{}'.format(kk, residual))
+        f_history.append(forwg(x))
 
         nu = xprev + (1/theta)*(x-xprev)
+        xprev = x
+
+        #  if kk>1:
+        #      assert(f_history[-1]<=f_history[-2])
+        if (residual <= eps):
+            break
+
+    plt.plot(f_history)
+    plt.show()
+    logger.debug(x-xhat)
+    return x
+
+def FISTA_method2(xhat, forwg, gradg, proxh, eps=1e-15, niters=100):
+    warnings.warn("FISTA_method2 is unstable and should not be used")
+    logger.info('Preparing for optimization...')
+    time_start = time.time()
+
+    # hyperparams
+    beta1 = 1 # >1
+    beta2 = 0.5 # <1
+
+    # initialize opt vars
+    nuprev = xprev = np.random.rand(*xhat.shape)
+    tprev = 10
+    thetaprev = 1
+
+    res_history = []
+    f_history = []
+    for kk in range(1,niters+1):
+        ll = 0
+        t = tprev*beta1
+        while True:
+            # line search
+            theta = positive_root_2(t, tprev, thetaprev) if kk>1 else 1
+            y = (1-theta)*xprev + theta*nuprev
+            x = proxh(y-t*gradg(y) , t)
+
+            # Lipschitz/step-size Condition
+            ubound_gap = (forwg(y) + np.inner(gradg(y), x-y) + (1/(2*t))*sqeuclidean(x-y)) - forwg(x)
+            print('k_{}|ls_{}>> t:{}, gap:{}, '.format(kk, ll, t, ubound_gap))
+            if ubound_gap >= 0:
+                break
+            ll+=1
+            t *= beta2
+
+        nu = xprev + (1/theta)*(x-xprev)
+        xprev = x
+        nuprev = nu
+        tprev = t
+        thetaprev = theta
+
         residual = np.linalg.norm(xprev-x)/np.linalg.norm(xprev)
-        logger.debug('k_{}>> res:{}'.format(kk, residual))
+        print('k_{}>> res:{}'.format(kk, residual))
         res_history.append(residual)
         f_history.append(forwg(x))
         if (residual <= eps):
@@ -155,11 +216,25 @@ def optimize(xhat, forwg, gradg, proxh, wreg=1.0, eps=1e-15, niters=100):
 
 
 if __name__ == '__main__':
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(logging.StreamHandler(sys.stdout))
-    xhat = np.zeros((10000,))
-    x = optimize(xhat, lambda x: 0.5*sqeuclidean(x-xhat), lambda x: x-xhat, prox_0,)
-    logger.debug(x)
+    pass
+
+    #  # huber test
+    #  x = np.arange(-4, 4, 0.1)
+    #  y = np.empty_like(x)
+    #  yg = np.empty_like(x)
+    #  for ii, xx in enumerate(x):
+    #      y[ii] = huber(xx, 0.3)
+    #      yg[ii] = grad_huber(xx, 0.3)
+    #  plt.plot(x, y)
+    #  plt.plot(x, yg)
+    #  plt.show()
+
+    #  # Optimization test
+    #  logger.setLevel(logging.DEBUG)
+    #  logger.addHandler(logging.StreamHandler(sys.stdout))
+    #  xhat = np.zeros((10000,))
+    #  x = optimize(xhat, lambda x: 0.5*sqeuclidean(x-xhat), lambda x: x-xhat, prox_0,)
+    #  logger.debug(x)
 
 
 

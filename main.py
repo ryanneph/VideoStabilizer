@@ -18,7 +18,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('infile', metavar='in', help='input video file')
 parser.add_argument('-o', '--out', default=None, help='input video file')
 parser.add_argument('--transform', default='affine', choices=['affine', 'perspective'], help='camera motion model')
-parser.add_argument('--smoothness', type=int, default=10, help='moving average filter radius')
+parser.add_argument('--smoothness', type=float, default=10, help='moving average filter radius')
+parser.add_argument('--hubermu', type=float, default=0.1, help='huber penalty relaxation coeff.')
 parser.add_argument('--resample', '--re', type=float, dest='resample', default=1.0, help='resample with zoom factor')
 parser.add_argument('--vis', '--visualize', dest='visualize', action='store_true', help='play video with feature annotation')
 parser.add_argument('-L', '--loglevel', default='DEBUG', choices=list(logging._nameToLevel.keys()), help='set logging level')
@@ -28,7 +29,7 @@ parser.add_argument('--nostabilize', '--nostab', action='store_false', dest='sta
 args = parser.parse_args()
 loglevel = logging._nameToLevel[args.loglevel]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('vidstab')
 logger.addHandler( logging.StreamHandler(sys.stdout) )
 logging.getLogger().setLevel(loglevel)
 
@@ -59,15 +60,15 @@ def stabilize_affine(vz, vg, points):
     #  r_smtraj  = stabilize.smooth_motion(r_traj,  radius=args.radius)
     #  tx_smtraj = stabilize.smooth_motion(tx_traj, radius=args.radius)
     #  ty_smtraj = stabilize.smooth_motion(ty_traj, radius=args.radius)
-    sx_smtraj = stabilize.optimize_motion(sx_traj, smoothness=args.smoothness)
-    sy_smtraj = stabilize.optimize_motion(sy_traj, smoothness=args.smoothness)
-    r_smtraj  = stabilize.optimize_motion(r_traj,  smoothness=args.smoothness)
-    tx_smtraj = stabilize.optimize_motion(tx_traj, smoothness=args.smoothness)
-    ty_smtraj = stabilize.optimize_motion(ty_traj, smoothness=args.smoothness)
+    sx_smtraj = stabilize.optimize_motion(sx_traj, smoothness=args.smoothness, mu=args.hubermu)
+    sy_smtraj = stabilize.optimize_motion(sy_traj, smoothness=args.smoothness, mu=args.hubermu)
+    r_smtraj  = stabilize.optimize_motion(r_traj,  smoothness=args.smoothness, mu=args.hubermu)
+    tx_smtraj = stabilize.optimize_motion(tx_traj, smoothness=args.smoothness, mu=args.hubermu)
+    ty_smtraj = stabilize.optimize_motion(ty_traj, smoothness=args.smoothness, mu=args.hubermu)
 
     trajectory = sfm.compose_affine(sx_traj, sy_traj, r_traj, tx_traj, ty_traj)
     sm_trajectory = sfm.compose_affine(sx_smtraj, sy_smtraj, r_smtraj, tx_smtraj, ty_smtraj)
-    vstab = transform.warp_sequence_affine(vz, Aseq+(sm_trajectory-trajectory))
+    vstab = transform.warp_sequence_affine(vz,Aseq+(sm_trajectory-trajectory))
 
     if args.visualize:
         visualize.plot_motion_affine(trajectory, sm_trajectory)

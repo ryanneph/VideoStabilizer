@@ -6,7 +6,7 @@ import cv2
 
 from video import ftou8
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('vidstab.'+__name__)
 
 def calculate_features(vg):
     # calculate tracking points
