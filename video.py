@@ -13,6 +13,7 @@ def read_all_frames(cv2_cap: cv2.VideoCapture, segment=None):
     while cv2_cap.isOpened():
         ii += 1
         if segment is not None and ii<segment[0]:
+            cv2_cap.read()
             continue
         elif segment is not None and ii>segment[1]:
             break
