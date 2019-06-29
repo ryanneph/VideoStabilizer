@@ -58,6 +58,7 @@ def interactive_play_video(varr, framerate=None, features=None):
     if not framerate:
         framerate = 24
     playing = True
+    dotsize = int(varr.shape[0]//100*2.5)
 
     ii = 0
     while ii<varr.shape[0]:
@@ -68,7 +69,7 @@ def interactive_play_video(varr, framerate=None, features=None):
             #  for pt in pts[np.random.choice(len(pts), min(20,len(pts)), replace=False)]:
                 pt = np.squeeze(pt)
                 if len(pt)==2:
-                    cv2.circle(frame, (pt[0], pt[1]), 3, (0,0,255), -1)
+                    cv2.circle(frame, (pt[0], pt[1]), dotsize, (0,0,255), -1)
         cv2.imshow('features', frame)
         while True:
             keyp = cv2.waitKey(int(1/framerate*1000))

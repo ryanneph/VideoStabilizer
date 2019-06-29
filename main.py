@@ -60,7 +60,7 @@ def stabilize_affine(vz, vg, points):
 
     zoomlims  = (0.2, 1.8)
     deglims   = (-4, 4)
-    translims = (-300, 300)
+    translims = (-20, 20)
     sx_smtraj = stabilize.smooth_motion(sx_traj, smoothness=args.smoothness, mu=args.hubermu, boxbound=zoomlims)
     sy_smtraj = stabilize.smooth_motion(sy_traj, smoothness=args.smoothness, mu=args.hubermu, boxbound=zoomlims)
     r_smtraj  = stabilize.smooth_motion(r_traj,  smoothness=args.smoothness, mu=args.hubermu, boxbound=(math.pi*deglims[0]/180.0, math.pi*deglims[1]/180.0))
