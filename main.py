@@ -58,7 +58,7 @@ def stabilize_affine(vz, vg, points):
     tx_traj = np.cumsum(T[:,0])
     ty_traj = np.cumsum(T[:,1])
 
-    zoomlims  = (0.2, 1.8)
+    zoomlims  = (0.2, 4.0)
     deglims   = (-4, 4)
     translims = (-20, 20)
     sx_smtraj = stabilize.smooth_motion(sx_traj, smoothness=args.smoothness, mu=args.hubermu, boxbound=zoomlims)
