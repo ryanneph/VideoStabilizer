@@ -1,0 +1,5 @@
+matplotlib
+numpy
+PyQt5
+scipy
+opencv-python >= "4.2.0"
